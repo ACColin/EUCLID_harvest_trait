@@ -1,0 +1,34 @@
+---
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Aim:
+Harvest Eucalyptus species traits from botanical descriptions ("fact sheets") that are available on the EUCLID website <https://apps.lucidcentral.org/euclid/>. In this document, I will clean up the raw data and get it into a state where I can begin extracting trait data from it.
+
+Extract life-history trait information for the PGLS analysis on Victoria's CCA dataset.
+
+The EUCLID data and corymbia_species.txt, angophora_species.txt were obtained by extracting the urls from the .htm websites for Corymbia and Angophora species - <https://apps.lucidcentral.org/euclid/text/entities/index_angophora.htm> and <https://apps.lucidcentral.org/euclid/text/entities/index_corymbia.htm>.
+
+
+# 01. Dumping the website
+
+There is a webpage of all Angophora/Corymbia species on EUCLID with links to their fact sheets at <https://apps.lucidcentral.org/euclid/text/entities/index.htm>. I downloaded the code for these webpages and used a regular expression to grab just the URLs to the fact sheets. Those URLs are in a plain text file in `raw_data/angophora_species.txt` and `raw_data/corymbia_species.txt`:
+
+  `https://apps.lucidcentral.org/euclid/text/entities/corymbia_abbreviata.htm`
+  `https://apps.lucidcentral.org/euclid/text/entities/corymbia_abergiana.htm`
+  `https://apps.lucidcentral.org/euclid/text/entities/corymbia_aparrerinja.htm`
+  `https://apps.lucidcentral.org/euclid/text/entities/corymbia_arafurica.htm`
+  `https://apps.lucidcentral.org/euclid/text/entities/corymbia_arenaria.htm`
+
+Linux command used: `cat EUCLIDSpeciesIndex.htm | tr '"' '\n' | tr "'" '\n' | grep -e '^https://' -e '^http://' -e'^//' | sort | uniq > corymbia_species.txt`
+
+Then I used `wget` <https://www.gnu.org/software/wget/> to download every URL in the list:
+
+    wget -i "euc_species.txt"
+    
+The downloaded HTML files were moved to `raw_data/EUCLID_dump_corymbia` and `raw_data/EUCLID_dump_angophora`:
+
+
