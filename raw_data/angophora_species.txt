@@ -1,0 +1,12 @@
+https://apps.lucidcentral.org/euclid/text/entities/angophora_bakeri_subsp._bakeri.htm
+https://apps.lucidcentral.org/euclid/text/entities/angophora_bakeri_subsp._crassifolia.htm
+https://apps.lucidcentral.org/euclid/text/entities/angophora_costata_subsp._costata.htm
+https://apps.lucidcentral.org/euclid/text/entities/angophora_costata_subsp._euryphylla.htm
+https://apps.lucidcentral.org/euclid/text/entities/angophora_costata_subsp._leiocarpa.htm
+https://apps.lucidcentral.org/euclid/text/entities/angophora_floribunda.htm
+https://apps.lucidcentral.org/euclid/text/entities/angophora_hispida.htm
+https://apps.lucidcentral.org/euclid/text/entities/angophora_inopina.htm
+https://apps.lucidcentral.org/euclid/text/entities/angophora_melanoxylon.htm
+https://apps.lucidcentral.org/euclid/text/entities/angophora_robur.htm
+https://apps.lucidcentral.org/euclid/text/entities/angophora_subvelutina.htm
+https://apps.lucidcentral.org/euclid/text/entities/angophora_woodsiana.htm
