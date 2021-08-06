@@ -1,4 +1,8 @@
 ---
+title: "Harvest traits from EUCLID htm"
+author: "AC"
+date: "06/08/2021"
+output: html_document
 ---
 
 ```{r setup, include=FALSE}
