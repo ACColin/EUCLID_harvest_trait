@@ -715,7 +715,7 @@ raw$seed %>%
 
 seed_shape_regex <- 
     c("obliquely-pyramidal", "obliquely pyramidal", "flattened-ovoid", 
-      "flattened ovoid", "sub-spherical", "pyramidal", "cuboid", "ovoid") %>% 
+      "flattened ovoid", "sub-spherical", "pyramidal", "cuboid", "ovoid", "ellipsoidal", "long") %>% 
     paste(collapse = "|") %>% 
     paste0("(", ., ")") %>% 
     regex(ignore_case = TRUE)
@@ -742,22 +742,21 @@ seed_shape_df <-
            seed_shape_oblique_pyramidal = str_detect(shape, ";obliquely.pyramidal;"),
            seed_shape_pyramidal         = str_detect(shape, ";pyramidal;"),
            seed_shape_cuboid            = str_detect(shape, ";cuboid;"),
-           seed_shape_subspherical      = str_detect(shape, ";sub-spherical;")
+           seed_shape_subspherical      = str_detect(shape, ";sub-spherical;"),
+           seed_shape_ellipsoidal       = str_detect(shape, ";ellipsoidal;")
            ) %>% 
     # If all are false, then replace with NA.
     mutate(logical_sum = sum(seed_shape_flat_ovoid, seed_shape_ovoid,
                              seed_shape_oblique_pyramidal, seed_shape_pyramidal,
-                             seed_shape_cuboid, seed_shape_subspherical,
+                             seed_shape_cuboid, seed_shape_subspherical, seed_shape_ellipsoidal,
                              na.rm = TRUE)) %>% 
-    mutate_at(vars(seed_shape_flat_ovoid:seed_shape_subspherical), 
+    mutate_at(vars(seed_shape_flat_ovoid:seed_shape_ellipsoidal), 
               ~ ifelse(logical_sum == 0, NA, .)) %>% 
     ungroup() %>% 
     select(-seed, -shape, -logical_sum) %>% 
     glimpse()
 
-# The species here were checked and do not use standard terms for seed shape, or 
-# they use rare words. These include "linear", "boat-shaped", "saucer-shaped",
-# "flattened", and "elongated".
+# Not working for most of them, either "seeds not observed" or use of words like "saucer-shaped".
 rows_with_na(seed_shape_df)
 ```
 
@@ -806,7 +805,7 @@ inflorescence_df <-
     mutate(colour = 
                str_extract(flower, "Flowers? .*?\\.?$") %>% 
                str_remove_all("rarely.*?$") %>% 
-               str_remove_all("pale|usually|or |to") %>% 
+               str_remove_all("creamy|pale|usually|or |to") %>% 
                str_squish() %>% 
                first_n_words(1, 5),
            flower_white = any(str_detect(colour, col_white)),
@@ -825,7 +824,7 @@ inflorescence_df <-
     glimpse()
 
 
-# These NA rows were confirmed to have no colour description.
+# These NA rows were confirmed to have no colour description, "flower colour unkown".
 rows_with_na(inflorescence_df)
 ```
 
