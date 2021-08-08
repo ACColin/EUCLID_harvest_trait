@@ -206,7 +206,7 @@ classification_df <-
             section = get_level(named_classif, "section"),
             series = get_level(named_classif, "series"),
             subseries = get_level(named_classif, "subseries"),
-            species = get_level(name, "^eucalyptus"),
+            species = get_level(name, "^corymbia"),
             subspecies = get_level(name, "subsp\\."),
             variety = get_level(name, "var\\.")) %>% 
     ungroup() %>% 
@@ -291,7 +291,7 @@ height_df <-
     glimpse()
 
 
-# These NA rows were checked and confirmed to have no described height.
+# Maximum length was retrieved for all species!
 rows_with_na(height_df)
 ```
 
@@ -326,6 +326,7 @@ has_lignotuber <- c("Forming a lignotuber",
                     "Forms a lignotuber",
                     "Lignotuberous",
                     "seem to form a lignotuber",
+                    "Forming both lignotuber",
                     "forming a \\?lignotuber")
 
 lignotuber_varies <- c("Lignotuber present or absent",
@@ -358,7 +359,7 @@ regeneration_df <-
     select(-form) %>%
     glimpse()
 
-# These NA rows were confirmed to have no description re. lignotubers.
+# Regeneration strategy retrieved for all.
 rows_with_na(regeneration_df)
 ```
 
@@ -500,7 +501,7 @@ blade_dims_df <-
     select(-leaf, -blade, -leaf_length, -leaf_width) %>%
     glimpse()
 
-# These rows were checked and confirmed to be missing descriptions of one or 
+# The species are not missing description for min_width and min_length but I can't figure out why yet. 
 # both leaf dimensions 
 rows_with_na(blade_dims_df)
 ```
@@ -567,7 +568,7 @@ venation_df <-
     glimpse()
 
 
-# These rows were checked and confirmed to be missing venation descriptions.
+# Venation description retrieved for all species!
 rows_with_na(venation_df)
 ```
 
@@ -609,7 +610,7 @@ gland_df <-
     select(-leaf, -gland) %>%
     glimpse()
 
-# These rows were checked and confirmed to be missing gland descriptions.
+# Gland descriptions retrieved for all species!
 rows_with_na(gland_df)
 ```
 
@@ -636,14 +637,7 @@ fruit_dims_df <-
     mutate(fruit_length = 
                ifelse(str_detect(dims, "and long"), fruit_width, fruit_length),
            fruit_width = 
-               ifelse(str_detect(dims, "and wide"), fruit_length, fruit_width)) %>% 
-    # Two species were checked and need to be manually fixed to deal with typos.
-    mutate(fruit_length = ifelse(name == "eucalyptus misella", 
-                                 "0.4--0.5 cm", fruit_length),
-           fruit_width = case_when(name == "eucalyptus misella" ~ "0.6--0.8 cm",
-                                   name == "eucalyptus nigrifunda" ~ "0.1--0.5 cm",
-                                   TRUE ~ fruit_length)
-          ) %>% 
+               ifelse(str_detect(dims, "and wide"), fruit_length, fruit_width)) %>%
     separate(col  = fruit_length, 
              into = c("fruit_length_min", "fruit_length_max", "fruit_length_unit"),
              sep  = "(--| )", fill = "left", remove = FALSE) %>% 
@@ -661,8 +655,8 @@ fruit_dims_df <-
     glimpse()
 
 
-# These rows that contain NAs have been checked to confirm that they are indeed
-# missing some min/max records.
+# Manually add the fruit_length_mm_min and fruit_length_mm_max
+# for Corymbia aspera, Corymbia plena and Corymbia rhodops.
 rows_with_na(fruit_dims_df)
 ```
 
