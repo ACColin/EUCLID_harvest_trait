@@ -1,0 +1,56 @@
+---
+title: "Merging the EUCLID datasets"
+author: "AC"
+date: "06/08/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+librarian::shelf(tidyverse, conflicted, DesiQuintans/desiderata)
+
+conflict_prefer("pluck", "purrr")
+conflict_prefer("filter", "dplyr")
+```
+
+# Aim
+
+I processed to collect and clean life-history traits for Corymbia, Angophora and Eucalyptus species in three independant datasets.
+
+In this document I'm going to merge them all in a single dataset.
+
+
+# 01. Import data
+
+```{r}
+angophora <- 
+    read_csv("../outputs/angophora_traits_from_EUCLID.csv") %>%
+    glimpse()
+
+eucalyptus <- 
+    read_csv("../data/euc_traits_from_EUCLID.csv") %>%
+    glimpse()
+
+corymbia <- 
+    read_csv("../outputs/angophora_traits_from_EUCLID.csv") %>%
+    glimpse()
+
+```
+
+# 02. Merge data
+
+``` {r}
+all_traits <-  
+  union_all(corymbia, angophora) %>%
+  union_all(all_traits, eucalyptus) %>%
+  glimpse()
+
+```
+
+## Save output
+
+``` {r}
+write_csv(all_traits, "../outputs/all_traits_from_EUCLID.csv")
+write_rds(all_traits, "../outputs/all_traits_from_EUCLID.rds")
+```

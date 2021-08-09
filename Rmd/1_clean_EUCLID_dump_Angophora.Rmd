@@ -1,0 +1,244 @@
+---
+title: "Harvest traits from EUCLID htm for Angophora species"
+author: "AC"
+date: "06/08/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+librarian::shelf(tidyverse, readtext, conflicted, rvest, DesiQuintans/desiderata)
+
+conflict_prefer("pluck", "purrr")
+conflict_prefer("filter", "dplyr")
+```
+
+## Aim:
+Harvest Eucalyptus species traits from botanical descriptions ("fact sheets") that are available on the EUCLID website <https://apps.lucidcentral.org/euclid/>. In this document, I will clean up the raw data and get it into a state where I can begin extracting trait data from it.
+
+Extract life-history trait information for the PGLS analysis on Victoria's CCA dataset.
+
+The EUCLID data and angophora_species.txt were obtained by extracting the urls from the .htm websites for Angophora species - <https://apps.lucidcentral.org/euclid/text/entities/index_angophora.htm>.
+
+
+# 01. Dumping the website
+
+There is a webpage of all Angophora species on EUCLID with links to their fact sheets at <https://apps.lucidcentral.org/euclid/text/entities/index.htm>. I downloaded the code for these webpages and used a regular expression to grab just the URLs to the fact sheets. Those URLs are in a plain text file in `raw_data/angophora_species.txt`:
+
+  `https://apps.lucidcentral.org/euclid/text/entities/angophora_bakeri_subsp._bakeri.htm`
+  `https://apps.lucidcentral.org/euclid/text/entities/angophora_bakeri_subsp._crassifolia.htm`
+  `https://apps.lucidcentral.org/euclid/text/entities/angophora_costata_subsp._costata.htm`
+  `https://apps.lucidcentral.org/euclid/text/entities/angophora_costata_subsp._euryphylla.htm`
+  `https://apps.lucidcentral.org/euclid/text/entities/angophora_costata_subsp._leiocarpa.htm`
+
+Linux command used: `cat EUCLIDSpeciesIndex.htm | tr '"' '\n' | tr "'" '\n' | grep -e '^https://' -e '^http://' -e'^//' | sort | uniq > angophora_species.txt`
+
+Then I used `wget` <https://www.gnu.org/software/wget/> to download every URL in the list:
+
+    wget -i "angophora_species.txt"
+    
+The downloaded HTML files were moved to `raw_data/EUCLID_dump_angophora`:
+
+  `raw_data/EUCLID_dump_angophora/angophora_bakeri_subsp._bakeri.htm`
+  `raw_data/EUCLID_dump_angophora/angophora_bakeri_subsp._crassifolia.htm`
+  `raw_data/EUCLID_dump_angophora/angophora_costata_subsp._costata.htm`
+  `raw_data/EUCLID_dump_angophora/angophora_costata_subsp._euryphylla.htm`
+
+The files can then be held in a big dataframe for working.
+
+``` {r construct EUCLID database}
+raw_pages_angophora <- 
+    # readtext may produce warnings if the files being imported are *.htm. 
+    # That's okay because it imports them as plain text, which is what we want.
+    readtext(list.files("../raw_data/EUCLID_dump_angophora/", full.names = TRUE)) %>% 
+    rename(name = doc_id, html = text) %>% 
+    # The name field can be used to grab the species/subspecies later.
+    mutate(name = str_remove(name, "\\.htm"),
+           name = str_replace_all(name, "_", " ")) %>% 
+    # Remove soft linebreaks and multiple spaces from HTML to make it easier to 
+    # see what I am retrieving. 
+    # I also replace the em dashes, which failed to encode properly, with --.
+    # I also replace <br /> with a text equivalent ( -BREAK- ) because it is 
+    # used in the HTML to separate parts of the description.
+    mutate(html = str_replace_all(html, "\\\n", " "),
+           html = str_replace_all(html, "\\s+", " "),
+           html = str_replace_all(html, "â€“", "--"),
+           html = str_replace_all(html, "Â°", "°"),
+           html = str_replace_all(html, "<br/>|<br />|<BR>", " -BREAK- ")) %>% 
+    # The HTML (as plain text) needs to be converted for use with rvest. It must
+    # be held in a list column because rvest outputs a 2-element list.
+    group_by(name) %>%
+    mutate(html = read_html(html) %>% list()) %>%
+    ungroup() %>%
+    identity()
+
+glimpse(raw_pages_angophora)
+
+```
+
+# 02. Isolating the sections of the fact sheet
+
+It's lovely that the different sections of the fact sheet are cleanly separated from each other in the HTML.
+
+```{r}
+# Remove the linebreak placeholders and clean up extra spaces.
+clean_text <- function(text) {
+    text %>% 
+        str_remove_all("-BREAK-") %>% 
+        str_trim()
+}
+
+
+get_classification <- function(html) {
+    html %>%
+        pluck(1) %>%   # The HTML is in a list column and must be plucked out.
+        html_node("div#classification") %>%
+        html_node("div.content") %>%
+        html_text() %>%
+        clean_text()
+}
+
+
+get_nomenclature <- function(html) {
+    html %>% 
+        pluck(1) %>%   # The HTML is in a list column and must be plucked out.
+        html_node("div#nomenclature") %>% 
+        html_node("div.content") %>% 
+        html_text() %>% 
+        clean_text()
+}
+
+
+get_description <- function(html) {
+    html %>% 
+        pluck(1) %>%   # The HTML is in a list column and must be plucked out.
+        html_node("div#description") %>% 
+        html_node("div.content") %>% 
+        html_text()
+        # No clean_text() here because I need the linebreak placeholders later.
+}
+```
+
+The output is like:
+
+```{r}
+get_classification(raw_pages_angophora$html[1])
+get_nomenclature(raw_pages_angophora$html[1])
+get_description(raw_pages_angophora$html[1])
+```
+
+This can be applied to each entry now:
+
+```{r}
+raw_sections_angophora <- 
+    raw_pages_angophora %>% 
+    group_by(name) %>% 
+    summarise_at("html", 
+                 list(~ get_classification(.),
+                      ~ get_nomenclature(.),
+                      ~ get_description(.)
+                      )
+                 ) %>% 
+    ungroup()
+```
+
+# 03. Splitting the description
+
+Each part of the description that they have asked for (growth form, adult leaves, fruit, seed, and inflorescence) can be further split off.
+
+```{r}
+get_growthform <- function(desc) {
+    desc %>% 
+        str_extract("^.*?(-BREAK-|$)") %>% 
+        clean_text()
+}
+
+
+get_adultleaves <- function(desc) {
+    out <- 
+        desc %>% 
+        # Sometimes "Adult leaves" is inside the sentence.
+        # "Crown composed entirely of Adult leaves which are..."
+        str_extract("(Adult|Crown|crown|Mature|mature) leaves.*?(-BREAK-|$)") %>% 
+        clean_text()
+    
+    # I try to search for "Adult leaves" first because for some species, the 
+    # lowercase "adult leaves" comes earlier in the description and is 
+    # wrongly retrieved instead.
+    if(is.na(out)) {
+        out <- 
+            desc %>% 
+            # Sometimes "Adult leaves" is inside the sentence.
+            # "Crown composed entirely of Adult leaves which are..."
+            str_extract("adult leaves.*?(-BREAK-|$)") %>% 
+            clean_text()
+    }
+    
+    # If the retrieved section does not have a number in it, it is probably 
+    # because the juvenile leaves are the ones being referred to when the adult
+    # leaves are described.
+    if(str_detect(out, "cm (long|wide)") == FALSE | is.na(out)) {
+        out <- NA_character_
+    }
+    
+    return(out)
+}
+
+
+get_fruit <- function(desc) {
+    desc %>% 
+        str_extract("-BREAK- Fruit.*?(-BREAK-|$)") %>% 
+        clean_text()
+}
+
+
+get_seeds <- function(desc) {
+    desc %>% 
+        str_extract("Seed.*?(-BREAK-|$)") %>% 
+        clean_text()
+}
+
+
+get_inflorescence <- function(desc) {
+    desc %>% 
+        str_extract("(-BREAK-)? Inflorescence.*?(-BREAK-|$)") %>% 
+        clean_text()
+}
+```
+
+The output looks like this:
+
+```{r}
+get_growthform(raw_sections_angophora$get_description[1])
+get_adultleaves(raw_sections_angophora$get_description[799])
+get_fruit(raw_sections_angophora$get_description[1])
+get_seeds(raw_sections_angophora$get_description[1])
+get_inflorescence(raw_sections_angophora$get_description[1])
+```
+
+These columns can be retrieved too. This dataframe is now ready for the trait extraction process.
+
+```{r}
+sections_clean <- 
+    raw_sections_angophora %>% 
+    group_by(name) %>% 
+    mutate_at("get_description", 
+                 list(~ get_growthform(.),
+                      ~ get_adultleaves(.),
+                      ~ get_fruit(.),
+                      ~ get_seeds(.),
+                      ~ get_inflorescence(.))) %>% 
+    ungroup() %>% 
+    select(name, get_classification, get_growthform:get_inflorescence, 
+           everything()) %>% 
+    glimpse()
+```
+
+
+# Output
+
+```{r}
+write_rds(sections_clean, "../intermediate/factsheet_as_sections_angophora.rds")
+write_csv(sections_clean, "../intermediate/factsheet_as_sections_angophora.csv")
+```

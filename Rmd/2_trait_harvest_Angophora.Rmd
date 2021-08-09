@@ -1,0 +1,881 @@
+---
+title: "Harvest traits from EUCLID dump for Angophora species"
+author: "AC"
+date: "06/08/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+librarian::shelf(tidyverse, conflicted, DesiQuintans/desiderata)
+
+conflict_prefer("pluck", "purrr")
+conflict_prefer("filter", "dplyr")
+```
+
+# Aim
+
+In `1_clean_EUCLID_dump_Angophora.Rmd`, I processed the EUCLID Angophora fact sheets that I downloaded so that each relevant section of the fact sheet was in a separate column, which makes it easier to target, for example, leaf traits without catching seed traits.
+
+In this document, I will do the actual harvesting.
+
+
+## Traits to harvest
+
+- Classification
+    - Subgenus
+    - Section
+    - Subsection
+    - Series
+    - Species
+    - Subspecies
+    - Victoria and Anne-Cecile: "For some species there is not all the 
+      information and it does not indicate which information is what, for 
+      instance in E. diversicolor appears as "Eucalyptus | Symphyomyrtus | 
+      Inclusae" in which Inclusae is a subseries but in most appears as 
+      "Eucalyptus | Symphyomyrtus | Maidenaria | Euryotae | Bridgesiana" being 
+      second subgenus, third section, fourth subsection and final serie"
+
+- General description
+    - Habit
+    - Maximum height
+    - Regeneration strategy (comes after habit and maximum height in desc)
+    
+- Adult leaves
+    - Blade form
+    - Blade length
+    - Blade width
+    - Oil glands (intersectional, island, absent, or obscure, sometimes 
+      'abundant' or 'crowded')
+    - Reticulation of veins ("moderately to densely reticulate" or 
+      "sparsely to moderately reticulate", for example)
+    
+- Fruit
+    - Fruit length
+    - Fruit width
+    
+- Seed
+    - Seed length
+    - Seed shape
+    
+- Inflorescence
+    - Flower colour (useful for pilot analysis)
+
+
+
+# 01. Import data
+
+```{r}
+raw <- 
+    read_rds("../intermediate/factsheet_as_sections_angophora.rds") %>% 
+    set_names(c("name", "classif", "form", "leaf", "fruit", "seed", 
+                "flower", "auth", "desc")) %>% 
+    glimpse()
+```
+
+
+# 02. Extract classification names
+
+Genus, subgenus, section, subsection, series, and subseries can come from `classif`. Correctly sorting the classification names into columns will be challenging. May need to make a list of allowed names in each column?
+
+Species and subspecies can come from `name`.
+
+## List of allowed classification names
+
+I retrieved this list using regular expressions from Dean Nicolle's *Classification of the Eucalypts* table (`raw_data/Classification-Of-The-Eucalypts.pdf`). I omitted these unpublished names:
+
+
+```{r}
+genus <- 
+    c("Angophora")
+
+series <- 
+    c("Costatitae", "Angophora")
+
+subseries <- 
+    c("Floribundinae", "Melanoxylon", "Angophora")
+```
+
+## Annotate names with their classification level
+
+There's not that many unique classification paths (`r howmany(raw$classif)`). It might be best to just manually work my way through the paths using the above lists.
+
+```{r}
+class_paths <- 
+    unique(raw$classif) %>% 
+    sort() %>% 
+    # Prefix each name with a hyphen. Names starting with a hyphen haven't been
+    # matched yet. Later, names that are matched will have the hyphen removed.
+    # str_replace_all("([A-Z])", "-\\1") %>% 
+    # Split the paths using the bar. It's now a nested list.
+    str_split(fixed(" | "), n = Inf, simplify = FALSE)
+
+head(class_paths)
+
+
+annotate_path <- function(path, ...) {
+    # `path` is a vector of the plant's classification names, starting from 
+    # genus and going down to subseries. All 6 names are rarely present.
+    
+    # `namelist` is a list of namelists. [[1]] is genus, [[2]] is subgenus, all 
+    # the way down to [[6]] which is subseries.
+    namelist <- list(...)
+    
+    # `level` is the name of each classification level, derived from the 
+    # variable names. This will be used to annotate the path.
+    levels <- substitute(list(...)) %>% as.character() %>% {.[-1]}
+    
+    
+    
+    # The idea is to iterate through each element in `path` by stepping through
+    # the lists in `names`. If a match is found, annotate the path with 
+    # 1. For path[1], iterate through names[1:6].
+    # 2. When a match is found, add level[n] to the front of path[1].
+    # 3. If nothing is found, add "unknown".
+    # 4. For path[2], iterate through names[2:6].
+    # 5. Repeat 2:3.
+    output <- character(0)
+    
+    for(i in seq_along(path)) {
+        # For each item in the plant's classification path...
+        item <- path[[i]]
+        
+        # Choose the lists to compare it the item to. When the second path item is
+        # being compared (should correspond to subgenus), the first namelist (genus)
+        # is not needed.
+        for(j in i:length(namelist)) {
+            if (item %in% namelist[[j]]) {
+                output <- append(output, paste(levels[[j]], item))
+                break()
+            }
+        }
+    }
+    
+    output <- str_flatten(output, collapse = " | ")
+    
+    # If output is still empty, then no matches were found.
+    return(ifelse(length(output) == 0, NA, output))
+}
+
+named_class_paths <- 
+    map_chr(class_paths, ~ annotate_path(., genus, subgenus, section, 
+                                        series, subseries))
+    
+
+head(named_class_paths)
+```
+
+These annotated paths can then be joined back into the original table.
+
+```{r}
+classif_table <- 
+    tibble(classif = unique(raw$classif) %>% sort(),
+           named_classif = named_class_paths) %>% 
+    glimpse()
+
+raw_classification <- 
+    raw %>% 
+    select(name, classif) %>% 
+    left_join(classif_table, by = "classif")
+```
+
+
+## Split names into columns
+
+```{r}
+get_level <- function(path, level) {
+    # The x ? part is to catch hybrids, e.g. Eucalyptus x phylacis, where 
+    # "x phylacis" is an accepted species name.
+    out <- str_match(path, paste(level, "((x )?\\w+)"))[2]
+}
+
+classification_df <- 
+    raw_classification %>% 
+    group_by(name) %>% 
+    mutate(genus = word(name, 1) %>% str_to_title(),
+            # subgenus = get_level(named_classif, "subgenus"),
+            # section = get_level(named_classif, "section"),
+            series = get_level(named_classif, "series"),
+            subseries = get_level(named_classif, "subseries"),
+            species = get_level(name, "^angophora"),
+            subspecies = get_level(name, "subsp\\."),
+            variety = get_level(name, "var\\.")) %>% 
+    ungroup() %>% 
+    select(-classif, -named_classif) %>% 
+    glimpse()
+```
+
+
+
+# 03. Extract general growth details
+
+Habit is sometimes the first word, but not always. It's usually tree, mallee (sometimes "Mallet"). Sometimes it is both. TRUE/FALSE column?
+
+
+## Retrieve habit
+
+```{r}
+word(raw$form, 1, 2) %>% 
+    str_split(" ", simplify = TRUE) %>% 
+    count_unique(sort = TRUE)
+```
+
+Given this, there are only a few growth types in the descriptions.
+
+```{r}
+tree_regex <- regex("tree", ignore_case = TRUE)
+mallee_regex <- regex("malle", ignore_case = TRUE)
+# "Unlike the mallee, [the marlock] is single-stemmed and lacks a lignotuber."
+marlock_regex <- regex("marlock", ignore_case = TRUE)
+shrub_regex <- regex("shrub", ignore_case = TRUE)
+
+habit_df <- 
+    raw %>% 
+    select(name, form) %>% 
+    group_by(name) %>% 
+    mutate(habit_tree    = str_detect(form, tree_regex),
+           habit_mallee  = str_detect(form, mallee_regex),
+           habit_marlock = str_detect(form, marlock_regex),
+           habit_shrub   = str_detect(form, shrub_regex)) %>% 
+    # If all are false, then replace with NA.
+    mutate(logical_sum = sum(habit_tree, habit_mallee, habit_marlock, 
+                             habit_shrub, na.rm = TRUE)) %>% 
+    mutate_at(vars(habit_tree:habit_shrub), 
+              ~ ifelse(logical_sum == 0, NA, .)) %>% 
+    ungroup() %>% 
+    select(-form, -logical_sum) %>% 
+    glimpse()
+
+# Habit was retrieved for everything!
+rows_with_na(habit_df)
+```
+
+
+## Retrieve maximum height
+
+Maximum height will be the largest number in this column.
+
+```{r}
+# Retrieve numbers from a string. Use `fun` to choose which number to 
+# return, e.g. max or min or median.
+fetch_number <- function(str, fun) {
+    nums <- 
+        str %>% 
+        str_split(" |-", simplify = TRUE) %>% 
+        {shush(parse_number(.))} %>% 
+        na_rm()
+    
+    if (length(nums) == 0) {
+        return(NA)
+    } else {
+        do.call(fun, list(nums))
+    }
+}
+
+height_df <- 
+    raw %>% 
+    select(name, form) %>% 
+    group_by(name) %>% 
+    mutate(height_max_m = fetch_number(form, max)) %>% 
+    ungroup() %>% 
+    select(-form) %>%
+    glimpse()
+
+
+# Maximum length was retrieved for all species!
+rows_with_na(height_df)
+```
+
+
+## Retrieve regeneration strategy
+
+Regeneration strategy is at the end of this column's sentence. All mention a lignotuber.
+
+```{r}
+raw$form %>% 
+    str_split("\\. ") %>% 
+    map(., ~ .[length(.)]) %>% 
+    unlist() %>% 
+    count_unique(sort = TRUE)
+```
+
+```{r}
+# This list should be searched first because of the annoying phrasing of 
+# "Not forming a lignotuber", which collides with the has_lignotuber list.
+no_lignotuber <- c("Lignotuber absent",
+                   "Non-lignotuberous",
+                   "Lacking a lignotuber",
+                   "lacking a lignotuber",
+                   "Lignotuber apparently not formed",
+                   "Lignotuber not recorded but expected to be absent",
+                   "Lignotuber usually absent",
+                   "Not forming a lignotuber")
+
+has_lignotuber <- c("Forming a lignotuber",
+                    "forming a lignotuber",
+                    "Lignotuber present",
+                    "Forms a lignotuber",
+                    "Lignotuberous",
+                    "seem to form a lignotuber",
+                    "Forming both lignotuber",
+                    "forming a \\?lignotuber")
+
+lignotuber_varies <- c("Lignotuber present or absent",
+                       "Trees with lignotubers and others lacking")
+
+lignotuber_unknown <- c("Lignotuber character unknown",
+                        "Lignotuber presence/absence unknown",
+                        "Lignotuber status unknown",
+                        "Presence or absence of lignotuber uncertain")
+
+resprout_epicormic <- c("epicormic buds")
+
+resprout_latroot <- c("lateral roots")
+
+
+regeneration_df <- 
+    raw %>% 
+    select(name, form) %>% 
+    group_by(name) %>% 
+    mutate(regen_lignotuber = 
+               case_when(any(str_detect(form, no_lignotuber))      ~ FALSE,
+                         any(str_detect(form, lignotuber_varies))  ~ TRUE,
+                         any(str_detect(form, has_lignotuber))     ~ TRUE,
+                         any(str_detect(form, lignotuber_unknown)) ~ NA,
+                                                              TRUE ~ NA),
+           regen_epi_buds  = any(str_detect(form, resprout_epicormic)),
+           regen_lat_roots = any(str_detect(form, resprout_latroot)),
+           ) %>% 
+    ungroup() %>% 
+    select(-form) %>%
+    glimpse()
+
+# Regeneration strategy retrieved for all.
+rows_with_na(regeneration_df)
+```
+
+
+
+# 04. Extract adult leaf information
+
+
+## Retrieve leaf blade shape
+
+Blade form usually comes after the word "blade", but of course not always lol.
+
+```{r}
+# From https://en.wikipedia.org/wiki/Glossary_of_leaf_morphology
+# Sorted from longest word to shortest, because short words are more likely to 
+# be nested inside other names and should be tested last, e.g. 'ovate' 
+# inside 'obovate'.
+blade_shapes <- 
+    c("palmatipartite", "pinnatipartite", "asymmetrical", "oblanceolate", 
+      "pinnatisect", "spear-shaped", "palmatifid", "palmatisect", "pinnatifid", 
+      "auriculate", "emarginate", "fenestrate", "flabellate", "lanceolate", 
+      "mucronate", "obtrullate", "pandurate", "perfoliate", "semiterete", 
+      "unifoliate", "acuminate", "apiculate", "attenuate", "cordiform", 
+      "cuspidate", "laciniate", "obcordate", "orbicular", "perforate", 
+      "sagittate", "spatulate", "subobtuse", "trullate", "acicular", 
+      "aristate", "caudate", "digitate", "elliptic", "ensiform", "filiform", 
+      "multifid", "reniform", "rhomboid", "subulate", "truncate", "undulate", 
+      "cordate", "cuneate", "deltate", "deltoid", "falcate", "hastate", 
+      "laminar", "oblique", "obovate", "palmate", "pedate", "peltate", 
+      "plicate", "retuse", "rhombic", "rounded", "sinuate", "linear", "lorate", 
+      "lyrate", "oblong", "obtuse", "terete", "acute", "lobed", "ovate") %>% 
+    paste(collapse = "|") %>% 
+    paste0("(", ., ")") %>% 
+    regex(ignore_case = TRUE)
+
+get_blade_shape <- function(str) {
+    out <- str_extract(str, "blade .*?,")
+
+    if(is.na(out)) {
+        out <- str_extract(str, "^.*?(wide|base)")
+    }
+    
+    return(out)
+}
+
+raw$leaf %>% 
+    map_chr(., ~ get_blade_shape(.)) %>% 
+    str_extract_all(blade_shapes) %>%
+    unlist() %>% 
+    count_unique(sort = TRUE)
+```
+
+```{r}
+blade_df <- 
+    raw %>% 
+    select(name, leaf) %>% 
+    group_by(name) %>% 
+    # mutate(blade = str_extract(leaf, "blade .*?,")) %>% 
+    mutate(blade = get_blade_shape(leaf)) %>% 
+    mutate(blade_lanceolate = str_detect(leaf, "lanceolate"),
+           blade_falcate = str_detect(leaf, "falcate"),
+           blade_elliptic = str_detect(leaf, "elliptic"),
+           blade_linear = str_detect(leaf, "linear"),
+           blade_ovate = str_detect(leaf, "ovate"),
+           blade_oblong = str_detect(leaf, "oblong"),
+           blade_orbicular = str_detect(leaf, "orbicular"),
+           blade_cordate = str_detect(leaf, "cordate"),
+           blade_deltoid = str_detect(leaf, "deltoid"),
+           blade_oblanceolate = str_detect(leaf, "oblanceolate"),
+           blade_obovate = str_detect(leaf, "obovate"),
+           blade_obcordate = str_detect(leaf, "obcordate")) %>% 
+    ungroup() %>% 
+    select(-leaf, -blade) %>%
+    glimpse()
+
+# Blade shapes were retrieved for all species!
+rows_with_na(blade_df)
+```
+
+
+## Retrieve blade dimensions
+
+Length and width comes after the blade form, and before the word "base".
+
+There are actually only 2 sets of measurements in the leaf section, petiole length and blade length/width. If I remove petiole length (which I was not asked to supply), then I can just search the blade width/length manually. There are also numbers in brackets (e.g. "5.5--8(10) cm long", maybe rare measurements?) that I'd like to ignore.
+
+```{r}
+raw$leaf %>% 
+    # Petiole seems to always come before 'blade', but I will remove it two 
+    # different ways to be sure.
+    str_extract("blade.*?$") %>% 
+    str_remove("petiole.*?long") %>%
+    str_extract_all("\\d.*?(long|wide)") %>% 
+    unlist() %>% 
+    str_remove_all("(^|\\()[0-9.]+\\)") %>% 
+    head()
+```
+
+```{r}
+as_mm <- function(val, unit) {
+    if(is.na(val) | is.na(unit)) {
+        return(NA_real_)
+    }
+    
+    num <- parse_number(as.character(val))
+    
+    out <- case_when(unit == "mm" ~ num * 1,
+                     unit == "cm" ~ num * 10,
+                     unit == "m"  ~ num * 1000,
+                             TRUE ~ NA_real_)
+    return(out)
+}
+
+blade_dims_df <- 
+    raw %>% 
+    select(name, leaf) %>% 
+    group_by(name) %>% 
+    mutate(blade = 
+               str_remove(leaf, "petioles? (to )?[0-9\\-\\.]{1,20} cm long") %>%
+               str_remove_all("(^|\\()[0-9.]+\\)") %>% 
+               str_replace_all("cm", " cm") %>% 
+               str_replace_all("(\\d) ?--? ?(\\d)", "\\1--\\2") %>% 
+               str_squish()) %>% 
+    mutate(leaf_length = str_match(blade, "([0-9\\-\\.]+ \\w+) long")[2],
+           leaf_width  = str_match(blade, "([0-9\\-\\.]+ \\w+) wide")[2]) %>%
+    separate(col  = leaf_length, 
+             into = c("leaf_length_min", "leaf_length_max", "leaf_length_unit"),
+             sep  = "(--| )", fill = "left", remove = FALSE) %>% 
+    separate(col  = leaf_width, 
+             into = c("leaf_width_min", "leaf_width_max", "leaf_width_unit"),
+             sep  = "(--| )", fill = "left", remove = FALSE) %>% 
+    mutate(leaf_length_max = as_mm(leaf_length_max, leaf_length_unit),
+           leaf_length_min = as_mm(leaf_length_min, leaf_length_unit),
+           leaf_width_max  = as_mm(leaf_width_max,  leaf_width_unit),
+           leaf_width_min  = as_mm(leaf_width_min,  leaf_width_unit)) %>% 
+    select(-ends_with("_unit")) %>% 
+    rename_all(~ str_replace(., "_(min|max)", "_mm_\\1")) %>% 
+    ungroup() %>% 
+    select(-leaf, -blade, -leaf_length, -leaf_width) %>%
+    glimpse()
+
+# Blade dimension retrieved for all species! 
+rows_with_na(blade_dims_df)
+```
+
+
+## Retrieve vein reticulation
+
+Reticulation is near the words "reticulation" or "reticulate". Unfortunately, those words aren't always used.
+
+```{r}
+fetch_reticulation <- function(str) {
+    # Fetch the fragment of the sentence that talks about reticulation
+    out <- str_extract(str, ",[^,]*?(reticulat)[[:print:]]*?(,|\\.|$)")
+    
+    # Sometimes the description talks about venation instead, but reticulation
+    # should be preferred.
+    if(is.na(out)) {
+        out <- str_extract(str, ",[^,]*?(venation)[[:print:]]*?(,|\\.|$)")
+    }
+    
+    out %>% 
+        str_remove_all(",") %>% 
+        str_squish()
+}
+
+raw$leaf %>% 
+    fetch_reticulation() %>% 
+    count_unique(sort = TRUE) %>% 
+    pull("unique")
+
+# The words 'broken', 'clear', and 'finely' are used as descriptors sometimes 
+# ("very dense and broken" or "reticulate and fine"). I omit these words.
+sparse_retic     <- c("sparsely", "sparse")
+moderate_retic   <- c("moderately", "moderate")
+dense_retic      <- c("densely", "dense")
+very_dense_retic <- c("very densely", "very dense")
+obscure_retic    <- c("obscure")
+unknown_retic    <- c("uncertain", "unknown")
+absent_retic     <- c("absent", "invisible", "not visible", "no reticulation")
+```
+
+```{r}
+venation_df <- 
+    raw %>% 
+    select(name, leaf) %>% 
+    group_by(name) %>% 
+    mutate(veins = fetch_reticulation(leaf)) %>% 
+    mutate(reticulation_sparse = any(str_detect(veins, sparse_retic)),
+           reticulation_moderate = any(str_detect(veins, moderate_retic)),
+           reticulation_dense = any(str_detect(veins, dense_retic)),
+           reticulation_very_dense = any(str_detect(veins, very_dense_retic)),
+           reticulation_obscure = any(str_detect(veins, obscure_retic)),
+           reticulation_unknown = any(str_detect(veins, unknown_retic)),
+           reticulation_absent = any(str_detect(veins, absent_retic))
+           ) %>% 
+    # I manually checked the rows with NA venation, and only E. kybeanensis
+    # needs to be fixed.
+    mutate_at(vars(starts_with("reticulation")),
+              ~ ifelse(name == "eucalyptus kybeanensis", FALSE, .)) %>%
+    mutate(reticulation_absent = ifelse(name == "eucalyptus kybeanensis", 
+                                        TRUE, reticulation_absent)) %>% 
+    ungroup() %>% 
+    select(-leaf, -veins) %>%
+    glimpse()
+
+
+# Venation description retrieved for all species!
+rows_with_na(venation_df)
+```
+
+
+## Retrieve oil glands
+
+Oil glands are near the end of the passage and can fall into several categories, so it might be another TRUE/FALSE set of columns.
+
+```{r}
+raw$leaf %>% 
+    str_extract(",[^,]*?oil glands.*?$") %>%
+    str_remove_all(",") %>% 
+    str_squish() %>% 
+    str_split(" ") %>% 
+    unlist() %>% 
+    str_remove_all("[[:punct:]]") %>% 
+    count_unique(sort = TRUE) %>% 
+    filter(count >= 10)
+
+gland_words <- 
+    c("island", "intersectional", "obscure", "absent")
+```
+
+```{r}
+gland_df <- 
+    raw %>% 
+    select(name, leaf) %>% 
+    group_by(name) %>% 
+    mutate(gland = 
+               str_extract(leaf, ",[^,]*?oil glands.*?$") %>%
+               str_remove_all(",") %>% 
+               str_squish()) %>% 
+    mutate(oil_glands_island = str_detect(gland, "island"),
+           oil_glands_intersectional = str_detect(gland, "intersectional"),
+           oil_glands_obscure = str_detect(gland, "obscure"),
+           oil_glands_absent = str_detect(gland, "absent"),
+           ) %>% 
+    ungroup() %>% 
+    select(-leaf, -gland) %>%
+    glimpse()
+
+# Gland descriptions retrieved for all species!
+rows_with_na(gland_df)
+```
+
+
+
+# 05. Extract fruit dimensions
+
+Fruit length and width are in the middle of the passage, but care must be taken to avoid the pedicel length. Fruit length and width are always mentioned in that order, but length is also not always present heh.
+
+```{r}
+fruit_dims_df <- 
+    raw %>% 
+    select(name, fruit) %>% 
+    group_by(name) %>% 
+    mutate(dims = 
+               str_remove(fruit, "^.*?(hemispher|cup|cylind|obconic)") %>% 
+               str_remove("pedicel.{0,25}long.*?(,|;)") %>%
+               str_remove_all("(^|\\()[0-9.]+\\)") %>% 
+               str_remove_all("--[0-9.]+--") %>% 
+               str_replace_all("cm (long|wide)", " cm \\1") %>% 
+               str_squish()) %>% 
+    mutate(fruit_length = str_match(dims, "([0-9\\-\\.]+ \\w+) long")[2],
+           fruit_width  = str_match(dims, "([0-9\\-\\.]+ \\w+) wide")[2]) %>%
+    mutate(fruit_length = 
+               ifelse(str_detect(dims, "and long"), fruit_width, fruit_length),
+           fruit_width = 
+               ifelse(str_detect(dims, "and wide"), fruit_length, fruit_width)) %>%
+    separate(col  = fruit_length, 
+             into = c("fruit_length_min", "fruit_length_max", "fruit_length_unit"),
+             sep  = "(--| )", fill = "left", remove = FALSE) %>% 
+    separate(col  = fruit_width, 
+             into = c("fruit_width_min", "fruit_width_max", "fruit_width_unit"),
+             sep  = "(--| )", fill = "left", remove = FALSE) %>% 
+    mutate(fruit_length_max = as_mm(fruit_length_max, fruit_length_unit),
+           fruit_length_min = as_mm(fruit_length_min, fruit_length_unit),
+           fruit_width_max  = as_mm(fruit_width_max,  fruit_width_unit),
+           fruit_width_min  = as_mm(fruit_width_min,  fruit_width_unit)) %>% 
+    select(-ends_with("_unit")) %>% 
+    rename_all(~ str_replace(., "_(min|max)", "_mm_\\1")) %>% 
+    ungroup() %>% 
+    select(-fruit_length, -fruit_width) %>% 
+    glimpse()
+
+
+# Fruit traits retrieved for all species!
+rows_with_na(fruit_dims_df)
+```
+
+
+
+# 06. Extract seed information
+
+## Retrieve seed length
+
+Seed length is the only numeric value in this field.
+
+```{r}
+seed_dims_df <- 
+    raw %>% 
+    select(name, seed) %>% 
+    group_by(name) %>% 
+    mutate(dims = 
+               str_replace_all(seed, "mm,", "mm long") %>% 
+               str_replace_all("diameter", "long") %>% 
+               str_remove_all("(^|\\()[0-9.]+\\)") %>% 
+               str_replace_all("(\\d)-(\\d)", "\\1--\\2") %>% 
+               str_remove_all("--[0-9.]+--") %>% 
+               str_replace_all("mm long", " mm long") %>% 
+               str_squish()) %>% 
+    mutate(seed_length = str_match(dims, "([0-9\\-\\.]+ \\w+) long")[2]) %>%
+    separate(col  = seed_length, 
+             into = c("seed_length_min", "seed_length_max", "seed_length_unit"),
+             sep  = "(--| )", fill = "left", remove = FALSE) %>% 
+    mutate(seed_length_max = as_mm(seed_length_max, seed_length_unit),
+           seed_length_min = as_mm(seed_length_min, seed_length_unit)) %>% 
+    select(-ends_with("_unit")) %>% 
+    rename_all(~ str_replace(., "_(min|max)", "_mm_\\1")) %>% 
+    ungroup() %>% 
+    select(-seed, -dims, -seed_length) %>%
+    glimpse()
+
+
+# These rows with NAs were checked and confirmed to be missing seed length data.
+rows_with_na(seed_dims_df)
+```
+
+
+## Retrieve seed shape
+
+Seed shape is the sentence fragment immediately after the seed length.
+
+```{r}
+raw$seed %>% 
+    str_remove("^.*?(long|diameter|mm)(,|;|\\.) ?") %>% 
+    str_remove("dorsal.*?$") %>% 
+    str_extract("^.*?,") %>%
+    str_remove_all(",") %>% 
+    unlist() %>% 
+    count_unique(sort = TRUE) %>% 
+    filter(count >= 6)
+
+seed_shape_regex <- 
+    c("obliquely-pyramidal", "obliquely pyramidal", "flattened-ovoid", 
+      "flattened ovoid", "sub-spherical", "pyramidal", "cuboid", "ovoid", "ellipsoidal", "long") %>% 
+    paste(collapse = "|") %>% 
+    paste0("(", ., ")") %>% 
+    regex(ignore_case = TRUE)
+
+raw$seed %>% 
+    str_extract_all(seed_shape_regex) %>% 
+    unlist() %>% 
+    count_unique(sort = TRUE)
+```
+
+```{r}
+seed_shape_df <- 
+    raw %>% 
+    select(name, seed) %>% 
+    group_by(name) %>% 
+    mutate(shape = 
+               seed %>% 
+               str_extract_all(seed_shape_regex) %>% 
+               unlist() %>% 
+               paste0(collapse = ";") %>% 
+               paste0(";", ., ";")) %>% 
+    mutate(seed_shape_flat_ovoid        = str_detect(shape, ";flattened.ovoid;"),
+           seed_shape_ovoid             = str_detect(shape, ";ovoid;"),
+           seed_shape_oblique_pyramidal = str_detect(shape, ";obliquely.pyramidal;"),
+           seed_shape_pyramidal         = str_detect(shape, ";pyramidal;"),
+           seed_shape_cuboid            = str_detect(shape, ";cuboid;"),
+           seed_shape_subspherical      = str_detect(shape, ";sub-spherical;"),
+           seed_shape_long              = str_detect(shape, ";long;"),
+           seed_shape_ellipsoidal       = str_detect(shape, ";ellipsoidal;")
+           ) %>% 
+    # If all are false, then replace with NA.
+    mutate(logical_sum = sum(seed_shape_flat_ovoid, seed_shape_ovoid,
+                             seed_shape_oblique_pyramidal, seed_shape_pyramidal,
+                             seed_shape_cuboid, seed_shape_subspherical, seed_shape_ellipsoidal,
+                             na.rm = TRUE)) %>% 
+    mutate_at(vars(seed_shape_flat_ovoid:seed_shape_ellipsoidal), 
+              ~ ifelse(logical_sum == 0, NA, .)) %>% 
+    ungroup() %>% 
+    select(-seed, -shape, -logical_sum) %>% 
+    glimpse()
+
+# Seed shape traits were retrieved for all species!
+rows_with_na(seed_shape_df)
+```
+
+
+
+# 07. Extract flower colour
+
+Flower colour is the very last sentence, usually the very last word. Species often have variable flower colours, so it is best to record each colour in a separate column. The users can simplify this as desired.
+
+
+```{r}
+raw$flower %>% 
+    str_match(" Flowers (.*?)\\.$") %>% 
+    {.[,2]} %>% 
+    str_split(boundary("word")) %>% 
+    unlist() %>% 
+    count_unique(sort = TRUE)
+
+col_white        <- c("white", "cream", "whitish")
+col_yellow       <- c("yellow(ish| |\\.|$)", "lemon")
+col_red          <- c("red", "pink", "pink-red", "pinkish", "reddish")
+col_green_yellow <- c("green", "yellow-green", "green-yellow")
+col_orange       <- c("orange")
+col_purple       <- c("purple", "mauve")
+col_missing      <- c("Flowers not seen.", "unknown", "not known")
+```
+
+The colours need to be drawn specifically from the last sentence, or else there will be unwanted matches.
+
+```{r}
+first_n_words <- function(str, start, end) {
+    words <- str_split(str, " ")
+    
+    map_chr(words, 
+        function(x) {
+            limit <- ifelse(end > length(x), length(x), end)
+            
+            return(paste(x[start:limit], collapse = " "))
+        })
+}
+
+inflorescence_df <- 
+    raw %>% 
+    select(name, flower) %>% 
+    group_by(name) %>% 
+    mutate(colour = 
+               str_extract(flower, "Flowers? .*?\\.?$") %>% 
+               str_remove_all("rarely.*?$") %>% 
+               str_remove_all("creamy|pale|usually|or |to") %>% 
+               str_squish() %>% 
+               first_n_words(1, 5),
+           flower_white = any(str_detect(colour, col_white)),
+           flower_yellow = any(str_detect(colour, col_yellow)),
+           flower_green_yellow = any(str_detect(colour, col_green_yellow)),
+           flower_red = any(str_detect(colour, col_red)),
+           flower_orange = any(str_detect(colour, col_orange)),
+           flower_purple = any(str_detect(colour, col_purple))) %>% 
+    # If no columns were filled in, replace them with NAs.
+    mutate(missing = sum(flower_white, flower_yellow, flower_green_yellow, 
+               flower_red, flower_orange, flower_purple, na.rm = TRUE)) %>% 
+    mutate_at(vars(flower_white:flower_purple),
+              ~ ifelse(missing == 0, NA, .)) %>%
+    ungroup() %>% 
+    select(-flower, -colour, -missing) %>%
+    glimpse()
+
+
+# Flower colour was retrieved for all species!
+rows_with_na(inflorescence_df)
+```
+
+
+
+# 08. Combine result dataframes
+
+```{r}
+glimpse(classification_df)
+glimpse(habit_df)
+glimpse(height_df)
+glimpse(regeneration_df)
+glimpse(blade_df)
+glimpse(blade_dims_df)
+glimpse(venation_df)
+glimpse(gland_df)
+glimpse(seed_dims_df)
+glimpse(seed_shape_df)
+glimpse(inflorescence_df)
+
+angophora_traits <-  
+    classification_df %>% 
+    left_join(habit_df, by = "name") %>% 
+    left_join(height_df, by = "name") %>% 
+    left_join(regeneration_df, by = "name") %>% 
+    left_join(blade_df, by = "name") %>% 
+    left_join(blade_dims_df, by = "name") %>% 
+    left_join(venation_df, by = "name") %>% 
+    left_join(gland_df, by = "name") %>% 
+    left_join(seed_dims_df, by = "name") %>% 
+    left_join(seed_shape_df, by = "name") %>% 
+    left_join(inflorescence_df, by = "name") %>% 
+    left_join(select(raw, name, botanical_desc = desc), by = "name")
+```
+
+
+## Save output
+
+```{r}
+write_csv(angophora_traits, "../outputs/angophora_traits_from_EUCLID.csv")
+write_rds(angophora_traits, "../outputs/angophora_traits_from_EUCLID.rds")
+```
+
+
+## Data dictionary
+
+```{r}
+glimpse(angophora_traits)
+```
+
+- **name** --- Unique ID column.
+- **genus** to **variety** --- The species' taxonomic names.
+- **habit_tree** to **habit_shrub** --- The species' growth habit.
+- **height_max_m** --- The species' maximum height in metres.
+- **regen_lignotuber** to **regen_lat_roots** --- The species' regeneration strategy, whether lingotubers, reshooting from epicormic shoots, or reshooting from lateral roots.
+- **blade_lanceolate** to **blade_obcordate** --- The shape of adult leaves.
+- **leaf_length_mm_min** to **leaf_width_mm_max** --- The minimum and maximum dimensions of adult leaves in millimetres.
+- **reticulation_sparse** to **reticulation_absent** --- The reticulate venation of adult leaves. 
+- **oil_glands_island** to **oil_glands_absent** --- The arrangement of oil glands on adult leaves.
+- **seed_length_mm_min** to **seed_length_mm_max** --- The dimensions of seeds.
+- **seed_shape_flat_ovoid** to **seed_shape_subspherical** --- The shape of seeds.
+- **flower_white** to **flower_purple** --- The recorded colours of the filaments.
+- **botanical_desc** --- The complete botanical description. This can make the dataframe lag badly, so remove it if not needed.

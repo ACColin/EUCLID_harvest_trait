@@ -1,5 +1,5 @@
 ---
-title: "Harvest traits from EUCLID htm"
+title: "Harvest traits from EUCLID htm for Corymbia species"
 author: "AC"
 date: "06/08/2021"
 output: html_document
@@ -19,12 +19,12 @@ Harvest Eucalyptus species traits from botanical descriptions ("fact sheets") th
 
 Extract life-history trait information for the PGLS analysis on Victoria's CCA dataset.
 
-The EUCLID data and corymbia_species.txt, angophora_species.txt were obtained by extracting the urls from the .htm websites for Corymbia and Angophora species - <https://apps.lucidcentral.org/euclid/text/entities/index_angophora.htm> and <https://apps.lucidcentral.org/euclid/text/entities/index_corymbia.htm>.
+The EUCLID data and corymbia_species.txt were obtained by extracting the urls from the .htm websites for Corymbia species <https://apps.lucidcentral.org/euclid/text/entities/index_corymbia.htm>.
 
 
 # 01. Dumping the website
 
-There is a webpage of all Angophora/Corymbia species on EUCLID with links to their fact sheets at <https://apps.lucidcentral.org/euclid/text/entities/index.htm>. I downloaded the code for these webpages and used a regular expression to grab just the URLs to the fact sheets. Those URLs are in a plain text file in `raw_data/angophora_species.txt` and `raw_data/corymbia_species.txt`:
+There is a webpage of all Corymbia species on EUCLID with links to their fact sheets at <https://apps.lucidcentral.org/euclid/text/entities/index.htm>. I downloaded the code for these webpages and used a regular expression to grab just the URLs to the fact sheets. Those URLs are in a plain text file in `raw_data/corymbia_species.txt`:
 
   `https://apps.lucidcentral.org/euclid/text/entities/corymbia_abbreviata.htm`
   `https://apps.lucidcentral.org/euclid/text/entities/corymbia_abergiana.htm`
@@ -36,7 +36,7 @@ Linux command used: `cat EUCLIDSpeciesIndex.htm | tr '"' '\n' | tr "'" '\n' | gr
 
 Then I used `wget` <https://www.gnu.org/software/wget/> to download every URL in the list:
 
-    wget -i "euc_species.txt"
+    wget -i "corymbia_species.txt"
     
 The downloaded HTML files were moved to `raw_data/EUCLID_dump_corymbia` and `raw_data/EUCLID_dump_angophora`:
 
