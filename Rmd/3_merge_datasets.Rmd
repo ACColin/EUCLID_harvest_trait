@@ -33,7 +33,7 @@ eucalyptus <-
     glimpse()
 
 corymbia <- 
-    read_csv("../outputs/angophora_traits_from_EUCLID.csv") %>%
+    read_csv("../outputs/corymbia_traits_from_EUCLID.csv") %>%
     glimpse()
 
 ```
@@ -42,10 +42,11 @@ corymbia <-
 
 ``` {r}
 all_traits <-  
-  union_all(corymbia, angophora) %>%
+  union_all(corymbia, angophora)
+all_traits <-
   union_all(all_traits, eucalyptus) %>%
   glimpse()
-
+view(all_traits)
 ```
 
 ## Save output
